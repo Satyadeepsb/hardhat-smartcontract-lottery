@@ -18,6 +18,9 @@ contract Raffle {
     uint256 private immutable i_entraceFee;
     address payable[] private s_players;
 
+    /* Events */
+    event RaffleEnter(address indexed players);
+
     constructor(uint256 entraceFee) {
         i_entraceFee = entraceFee;
     }
@@ -26,7 +29,10 @@ contract Raffle {
         if (msg.value < i_entraceFee) {
             revert Raffle__NotEnoughETHEntered();
         }
-        s_players.push(payable(msg.msg.sender))
+        s_players.push(payable(msg.sender));
+        // Emit an event when we update a dynamic array or mapping
+        // Named events with the function name reversed
+        emit RaffleEnter(msg.sender);
     }
 
     // function pickRandomWinner() {}
