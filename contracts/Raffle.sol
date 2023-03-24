@@ -13,11 +13,19 @@ pragma solidity ^0.8.17;
 
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
 
 error Raffle__NotEnoughETHEntered();
 error Raffle__TranferFailed();
+error Raffle__NotOpen();
 
-contract Raffle is VRFConsumerBaseV2 {
+contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
+    /* Type declarations */
+    enum RaffleState {
+        OPEN,
+        CALCULATING
+    } // uint256 0 = OPEN, 1 = CALCULATING
+
     /* State Variable */
     uint256 private immutable i_entranceFee;
     address payable[] private s_players;
@@ -31,6 +39,8 @@ contract Raffle is VRFConsumerBaseV2 {
 
     /* Lottery Variables */
     address private s_recentWinner;
+    RaffleState private s_raffleState;
+    uint256 private s_lastTimestamp;
 
     /* Events */
     event RaffleEnter(address indexed players);
@@ -53,11 +63,16 @@ contract Raffle is VRFConsumerBaseV2 {
         i_subscriptionId = subscriptionId;
         i_entranceFee = entranceFee;
         i_callbackGasLimit = callbackGasLimit;
+        s_raffleState = RaffleState.OPEN;
+        s_lastTimestamp = block.timestamp;
     }
 
     function enterRaffle() public payable {
         if (msg.value < i_entranceFee) {
             revert Raffle__NotEnoughETHEntered();
+        }
+        if (s_raffleState != RaffleState.OPEN) {
+            revert Raffle__NotOpen();
         }
         s_players.push(payable(msg.sender));
         // Emit an event when we update a dynamic array or mapping
@@ -65,10 +80,11 @@ contract Raffle is VRFConsumerBaseV2 {
         emit RaffleEnter(msg.sender);
     }
 
-    function requestRandomWinner() external {
+    function performUpkeep(bytes calldata /* performData */) external {
         // Request the random number
         // Once we get it, do something with it
         // 2 transaction process
+        s_raffleState = RaffleState.CALCULATING;
         uint256 requestId = i_vrfCoordinator.requestRandomWords(
             i_gasLane,
             i_subscriptionId,
@@ -78,6 +94,26 @@ contract Raffle is VRFConsumerBaseV2 {
         );
         // Quiz... is this redundant?
         emit RequestedRaffleWinner(requestId);
+    }
+
+    /**
+     *
+     * @dev This is the function that the Chainlink Keeper nodes call
+     * they look for the `upkeepNeeded` to return true.
+     * 1. Our time interval should have passed
+     * 2. The lottery should have at least 1 player, and have some ETH
+     * 3. Our subscription is funded with LINK
+     * 4. Lottery should be in an "open" state
+     */
+    function checkUpkeep(
+        bytes calldata /* checkData */
+    ) external override returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool isOpen = (RaffleState.OPEN == s_raffleState);
+        // block.timestamp - last block timestamp
+        bool timePassed = ((block.timestamp - s_lastTimestamp) > i_interval);
+        bool hasPlayers = (s_players.length > 0);
+        bool hasBalance = (address(this).balance > 0);
+        upkeepNeeded = (isOpen && timePassed && hasBalance && hasPlayers);
     }
 
     function fulfillRandomWords(
@@ -90,6 +126,8 @@ contract Raffle is VRFConsumerBaseV2 {
         uint256 indexOfWinner = randowmWords[0] % s_players.length;
         address payable recentWinner = s_players[indexOfWinner];
         s_recentWinner = recentWinner;
+        s_raffleState = RaffleState.OPEN;
+        s_players = new address payable[](0);
         (bool success, ) = recentWinner.call{value: address(this).balance}("");
         // require(success)
         if (!success) {
