@@ -15,6 +15,7 @@ import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 
 error Raffle__NotEnoughETHEntered();
+error Raffle__TranferFailed();
 
 contract Raffle is VRFConsumerBaseV2 {
     /* State Variable */
@@ -34,6 +35,7 @@ contract Raffle is VRFConsumerBaseV2 {
     /* Events */
     event RaffleEnter(address indexed players);
     event RequestedRaffleWinner(uint256 indexed requestId);
+    event WinnerPicked(address indexed winner);
 
     /* Functions */
 
@@ -79,7 +81,7 @@ contract Raffle is VRFConsumerBaseV2 {
     }
 
     function fulfillRandomWords(
-        uint256 requestId,
+        uint256 /* requestId */,
         uint256[] memory randowmWords
     ) internal override {
         // s_players size 20
@@ -88,6 +90,12 @@ contract Raffle is VRFConsumerBaseV2 {
         uint256 indexOfWinner = randowmWords[0] % s_players.length;
         address payable recentWinner = s_players[indexOfWinner];
         s_recentWinner = recentWinner;
+        (bool success, ) = recentWinner.call{value: address(this).balance}("");
+        // require(success)
+        if (!success) {
+            revert Raffle__TranferFailed();
+        }
+        emit WinnerPicked(recentWinner);
     }
 
     /* View / Pure Functions  */
